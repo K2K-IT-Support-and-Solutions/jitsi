@@ -33,7 +33,7 @@ const FaceMaskOverlay = ({ videoElement }) => {
                     const mouthPoints = prediction.annotations.mouthUpperOuter
                         .concat(prediction.annotations.mouthLowerOuter.reverse());
                     
-                    ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+                    ctx.fillStyle = 'rgba(255, 0, 0, 0)';
                     ctx.beginPath();
                     mouthPoints.forEach((point, i) => {
                         if (i === 0) {

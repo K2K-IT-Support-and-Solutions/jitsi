@@ -1,9 +1,5 @@
-import React, { Component, useRef, useEffect,useState } from 'react';
+import React, { Component, useRef, useEffect, useState } from 'react';
 import { connect } from 'react-redux';
-import * as tf from '@tensorflow/tfjs';
-import * as facemesh from '@tensorflow-models/facemesh';
-
-// @ts-expect-error
 import VideoLayout from '../../../../modules/UI/videolayout/VideoLayout';
 import { IReduxState, IStore } from '../../app/types';
 import { isDisplayNameVisible } from '../../base/config/functions.web';
@@ -23,8 +19,16 @@ import Whiteboard from '../../whiteboard/components/web/Whiteboard';
 import { isWhiteboardEnabled } from '../../whiteboard/functions';
 import { setSeeWhatIsBeingShared } from '../actions.web';
 import { getLargeVideoParticipant } from '../functions';
-
 import ScreenSharePlaceholder from './ScreenSharePlaceholder.web';
+
+// Global type declarations for CDN-loaded libraries
+declare global {
+    interface Window {
+        tf: any;
+        facemesh: any;
+    }
+}
+
 const styles = {
     largeVideoContainer: {
         position: 'relative',
@@ -73,132 +77,179 @@ interface FaceMaskOverlayProps {
 
 const FaceMaskOverlay: React.FC<FaceMaskOverlayProps> = ({ videoElement, debugMode = false }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
-    const modelRef = useRef<facemesh.FaceMesh | null>(null);
+    const modelRef = useRef<any>(null);
     const animationFrameRef = useRef<number | null>(null);
-    const [currentFilter, setCurrentFilter] = useState<number>(0); // 0=glasses, 1=mustache, 2=cat ears
+    const [currentFilter, setCurrentFilter] = useState<number>(0);
+    const imagesLoaded = useRef<boolean>(false);
+    const filterImages = useRef<{
+        glasses: HTMLImageElement | null;
+        mustache: HTMLImageElement | null;
+        catEars: HTMLImageElement | null;
+    }>({ glasses: null, mustache: null, catEars: null });
 
-    // Apply a random filter every 5 seconds
+    // Load filter images
+    useEffect(() => {
+        const loadImages = async () => {
+            try {
+                const loadImage = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => {
+                    const img = new Image();
+                    img.src = src;
+                    img.onload = () => resolve(img);
+                    img.onerror = reject;
+                });
+
+                filterImages.current = {
+                    glasses: await loadImage('https://i.ibb.co/Nd4KFPhQ/Black-glasses.png'),
+                    mustache: await loadImage('https://www.pngitem.com/pimgs/m/509-5099664_overlay-cute-cat-filter-cat-ears-transparent-png.png'),
+                    catEars: await loadImage('https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRHIMKQEt8Eg2zhR9P8aonez-_RztCa5PFPbg&s')
+                };
+                imagesLoaded.current = true;
+            } catch (error) {
+                console.error('Failed to load filter images:', error);
+            }
+        };
+
+        loadImages();
+    }, []);
+
     useEffect(() => {
         const filterInterval = setInterval(() => {
-            setCurrentFilter(Math.floor(Math.random() * 3));
+            setCurrentFilter(prev => (prev + 1) % 3);
         }, 5000);
         return () => clearInterval(filterInterval);
     }, []);
 
-    const drawGlasses = (ctx: CanvasRenderingContext2D, prediction: facemesh.AnnotatedPrediction) => {
-        alert('Glasses filter is not implemented yet.');
+    const applyGlassesFilter = (ctx: CanvasRenderingContext2D, prediction: any) => {
+        const glassesImg = filterImages.current.glasses;
+        if (!glassesImg) return;
+
         const leftEye = prediction.annotations.leftEyeUpper0;
         const rightEye = prediction.annotations.rightEyeUpper0;
-        
         if (!leftEye || !rightEye) return;
 
-        // Frame
-        ctx.fillStyle = 'rgba(100, 100, 255, 0.7)';
-        ctx.beginPath();
-        leftEye.forEach((point, i) => {
-            if (i === 0) ctx.moveTo(point[0], point[1]);
-            else ctx.lineTo(point[0], point[1]);
-        });
-        rightEye.forEach((point, i) => {
-            ctx.lineTo(point[0], point[1]);
-        });
-        ctx.closePath();
-        ctx.fill();
-        
-        // Bridge
         const leftCenter = leftEye[Math.floor(leftEye.length/2)];
         const rightCenter = rightEye[Math.floor(rightEye.length/2)];
-        ctx.strokeStyle = 'rgba(50, 50, 150, 0.9)';
-        ctx.lineWidth = 8;
-        ctx.beginPath();
-        ctx.moveTo(leftCenter[0], leftCenter[1]);
-        ctx.lineTo(rightCenter[0], rightCenter[1]);
-        ctx.stroke();
+        const glassesWidth = rightCenter[0] - leftCenter[0];
+        const glassesHeight = glassesWidth * (glassesImg.naturalHeight / glassesImg.naturalWidth);
+
+        ctx.drawImage(
+            glassesImg,
+            leftCenter[0] - glassesWidth * 0.3,  
+            leftCenter[1] - glassesHeight * 0.6,
+            glassesWidth * 1.8,
+            glassesHeight * 1.2
+        );
     };
 
-    
-    
-    const drawMustache = (ctx: CanvasRenderingContext2D, prediction: facemesh.AnnotatedPrediction) => {
+    const applyMustacheFilter = (ctx: CanvasRenderingContext2D, prediction: any) => {
+        const mustacheImg = filterImages.current.mustache;
+        if (!mustacheImg) return;
+
         const noseBottom = prediction.annotations.noseBottom?.[0];
         const upperLip = prediction.annotations.upperLip?.[0];
-        
         if (!noseBottom || !upperLip) return;
 
-        const width = Math.abs(upperLip[0] - noseBottom[0]) * 2;
-        const height = width * 0.3;
-        
-        ctx.fillStyle = 'rgba(50, 50, 50, 0.9)';
-        ctx.beginPath();
-        ctx.ellipse(
-            noseBottom[0], 
-            noseBottom[1] + height/2, 
-            width/2, 
-            height/2, 
-            0, 0, Math.PI * 2
+        const mustacheWidth = Math.abs(upperLip[0] - noseBottom[0]) * 2;
+        const mustacheHeight = mustacheWidth * (mustacheImg.naturalHeight / mustacheImg.naturalWidth);
+
+        ctx.drawImage(
+            mustacheImg,
+            noseBottom[0] - mustacheWidth/2,
+            noseBottom[1] - mustacheHeight * 0.5,
+            mustacheWidth * 1.3,
+            mustacheHeight * 1.2
         );
-        ctx.fill();
     };
 
-    const drawCatEars = (ctx: CanvasRenderingContext2D, prediction: facemesh.AnnotatedPrediction) => {
-        const forehead = prediction.annotations.forehead?.[0];
+    const applyCatEarsFilter = (ctx: CanvasRenderingContext2D, prediction: any) => {
+        const catEarsImg = filterImages.current.catEars;
+        if (!catEarsImg) return;
+
         const leftEyebrow = prediction.annotations.leftEyebrow?.[0];
         const rightEyebrow = prediction.annotations.rightEyebrow?.[0];
-        
-        if (!forehead || !leftEyebrow || !rightEyebrow) return;
+        if (!leftEyebrow || !rightEyebrow) return;
 
-        const earHeight = Math.abs(forehead[1] - leftEyebrow[1]) * 1.5;
-        
-        // Left ear
-        ctx.fillStyle = 'rgba(255, 150, 150, 0.7)';
-        ctx.beginPath();
-        ctx.moveTo(leftEyebrow[0], leftEyebrow[1]);
-        ctx.lineTo(leftEyebrow[0] - earHeight/2, leftEyebrow[1] - earHeight);
-        ctx.lineTo(leftEyebrow[0] + earHeight/2, leftEyebrow[1] - earHeight);
-        ctx.closePath();
-        ctx.fill();
-        
-        // Right ear
-        ctx.beginPath();
-        ctx.moveTo(rightEyebrow[0], rightEyebrow[1]);
-        ctx.lineTo(rightEyebrow[0] - earHeight/2, rightEyebrow[1] - earHeight);
-        ctx.lineTo(rightEyebrow[0] + earHeight/2, rightEyebrow[1] - earHeight);
-        ctx.closePath();
-        ctx.fill();
+        const earsWidth = rightEyebrow[0] - leftEyebrow[0];
+        const earsHeight = earsWidth * (catEarsImg.naturalHeight / catEarsImg.naturalWidth);
+
+        ctx.drawImage(
+            catEarsImg,
+            leftEyebrow[0] - earsWidth * 0.4,
+            leftEyebrow[1] - earsHeight * 1.5,
+            earsWidth * 0.8,
+            earsHeight * 1.3
+        );
+
+        ctx.drawImage(
+            catEarsImg,
+            rightEyebrow[0] - earsWidth * 0.4,
+            rightEyebrow[1] - earsHeight * 1.5,
+            earsWidth * 0.8,
+            earsHeight * 1.3
+        );
     };
 
-    const drawMasks = (predictions: facemesh.AnnotatedPrediction[]) => {
+    const drawMasks = (predictions: any[]) => {
         const ctx = canvasRef.current?.getContext('2d');
-        if (!ctx || !canvasRef.current) return;
+        if (!ctx || !canvasRef.current || !imagesLoaded.current) return;
 
         ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-
         if (predictions.length === 0) return;
+
+        const isMirrored = videoElement?.style.transform.includes('scaleX(-1)');
+
+        if (isMirrored) {
+            ctx.scale(-1, 1);
+            ctx.translate(-canvasRef.current.width, 0);
+        }
 
         predictions.forEach(prediction => {
             try {
                 switch(currentFilter) {
                     case 0: 
-                        drawGlasses(ctx, prediction);
+                        applyGlassesFilter(ctx, prediction);
                         break;
                     case 1:
-                        drawMustache(ctx, prediction);
+                        applyMustacheFilter(ctx, prediction);
                         break;
                     case 2:
-                        drawCatEars(ctx, prediction);
+                        applyCatEarsFilter(ctx, prediction);
                         break;
                 }
             } catch (error) {
-                console.error('Error drawing filter:', error);
+                console.error('Error applying filter:', error);
             }
         });
 
-        if (debugMode) {
-            ctx.fillStyle = 'rgba(0,0,0,0.7)';
-            ctx.fillRect(10, 10, 200, 30);
-            ctx.fillStyle = 'white';
-            ctx.font = '12px Arial';
-            ctx.fillText(`Filter: ${['Glasses', 'Mustache', 'Cat Ears'][currentFilter]}`, 20, 30);
+        if (debugMode && predictions.length > 0) {
+            const firstFace = predictions[0];
+           
         }
+        if (isMirrored) {
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+        }
+    };
+
+    const loadScript = (src: string) => {
+        return new Promise<void>((resolve, reject) => {
+            const existingScript = document.querySelector(`script[src="${src}"]`);
+            if (existingScript) {
+                existingScript.addEventListener('load', () => resolve());
+                existingScript.addEventListener('error', reject);
+                return;
+            }
+
+            const script = document.createElement('script');
+            script.src = src;
+            script.onload = () => resolve();
+            script.onerror = reject;
+            document.head.appendChild(script);
+        });
+    };
+
+    const loadDependencies = async () => {
+        await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest');
+        await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/facemesh@latest');
     };
 
     const predict = async () => {
@@ -207,15 +258,44 @@ const FaceMaskOverlay: React.FC<FaceMaskOverlayProps> = ({ videoElement, debugMo
         }
 
         try {
-            // Update canvas dimensions to match video
-            if (canvasRef.current.width !== videoElement.videoWidth || 
-                canvasRef.current.height !== videoElement.videoHeight) {
-                canvasRef.current.width = videoElement.videoWidth;
-                canvasRef.current.height = videoElement.videoHeight;
+            const containerWidth = videoElement.offsetWidth;
+            const containerHeight = videoElement.offsetHeight;
+            if (canvasRef.current.width !== containerWidth || canvasRef.current.height !== containerHeight) {
+                canvasRef.current.width = containerWidth;
+                canvasRef.current.height = containerHeight;
             }
 
             const predictions = await modelRef.current.estimateFaces(videoElement);
-            drawMasks(predictions);
+            const videoWidth = videoElement.videoWidth;
+            const videoHeight = videoElement.videoHeight;
+            const videoAspect = videoWidth / videoHeight;
+            const containerAspect = containerWidth / containerHeight;
+
+            let scale, offsetX, offsetY;
+            if (containerAspect > videoAspect) {
+                scale = containerHeight / videoHeight;
+                const scaledWidth = videoWidth * scale;
+                offsetX = (containerWidth - scaledWidth) / 2;
+                offsetY = 0;
+            } else {
+                scale = containerWidth / videoWidth;
+                const scaledHeight = videoHeight * scale;
+                offsetY = (containerHeight - scaledHeight) / 2;
+                offsetX = 0;
+            }
+
+            const scaledPredictions = predictions.map((prediction: any) => {
+                const scaledAnnotations: { [key: string]: number[][] } = {};
+                Object.entries(prediction.annotations).forEach(([key, points]: [string, any]) => {
+                    scaledAnnotations[key] = points.map(([x, y]: [number, number]) => [
+                        x * scale + offsetX, 
+                        y * scale + offsetY
+                    ]);
+                });
+                return { ...prediction, annotations: scaledAnnotations };
+            });
+
+            drawMasks(scaledPredictions);
         } catch (error) {
             console.error('Face detection error:', error);
         }
@@ -225,8 +305,9 @@ const FaceMaskOverlay: React.FC<FaceMaskOverlayProps> = ({ videoElement, debugMo
 
     const loadModel = async () => {
         try {
-            await tf.ready();
-            modelRef.current = await facemesh.load({
+            await loadDependencies();
+            await window.tf.ready();
+            modelRef.current = await window.facemesh.load({
                 maxFaces: 1,
                 inputResolution: { width: 320, height: 240 },
                 detectionConfidence: 0.7
@@ -274,104 +355,27 @@ const FaceMaskOverlay: React.FC<FaceMaskOverlayProps> = ({ videoElement, debugMo
     );
 };
 
-// Hack to detect Spot.
 const SPOT_DISPLAY_NAME = 'Meeting Room';
 
 interface IProps {
-    /**
-     * The alpha(opacity) of the background.
-     */
     _backgroundAlpha?: number;
-
-    /**
-     * The user selected background color.
-     */
     _customBackgroundColor: string;
-
-    /**
-     * The user selected background image url.
-     */
     _customBackgroundImageUrl: string;
-
-    /**
-     * Whether the screen-sharing placeholder should be displayed or not.
-     */
     _displayScreenSharingPlaceholder: boolean;
-
-    /**
-     * Whether or not the hideSelfView is enabled.
-     */
     _hideSelfView: boolean;
-
-    /**
-     * Prop that indicates whether the chat is open.
-     */
     _isChatOpen: boolean;
-
-    /**
-     * Whether or not the display name is visible.
-     */
     _isDisplayNameVisible: boolean;
-
-    /**
-     * Whether or not the local screen share is on large-video.
-     */
     _isScreenSharing: boolean;
-
-    /**
-     * The large video participant id.
-     */
     _largeVideoParticipantId: string;
-
-    /**
-     * Local Participant id.
-     */
     _localParticipantId: string;
-
-    /**
-     * Used to determine the value of the autoplay attribute of the underlying
-     * video element.
-     */
     _noAutoPlayVideo: boolean;
-
-    /**
-     * Whether or not the filmstrip is resizable.
-     */
     _resizableFilmstrip: boolean;
-
-    /**
-     * Whether or not the screen sharing is visible.
-     */
     _seeWhatIsBeingShared: boolean;
-
-    /**
-     * Whether or not to show dominant speaker badge.
-     */
     _showDominantSpeakerBadge: boolean;
-
-    /**
-     * The width of the vertical filmstrip (user resized).
-     */
     _verticalFilmstripWidth?: number | null;
-
-    /**
-     * The max width of the vertical filmstrip.
-     */
     _verticalViewMaxWidth: number;
-
-    /**
-     * Whether or not the filmstrip is visible.
-     */
     _visibleFilmstrip: boolean;
-
-    /**
-     * Whether or not the whiteboard is ready to be used.
-     */
     _whiteboardEnabled: boolean;
-
-    /**
-     * The Redux dispatch function.
-     */
     dispatch: IStore['dispatch'];
 }
 
