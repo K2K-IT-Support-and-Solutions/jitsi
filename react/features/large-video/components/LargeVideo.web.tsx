@@ -122,23 +122,36 @@ const FaceMaskOverlay: React.FC<FaceMaskOverlayProps> = ({ videoElement, debugMo
     const applyGlassesFilter = (ctx: CanvasRenderingContext2D, prediction: any) => {
         const glassesImg = filterImages.current.glasses;
         if (!glassesImg) return;
-
+    
         const leftEye = prediction.annotations.leftEyeUpper0;
         const rightEye = prediction.annotations.rightEyeUpper0;
         if (!leftEye || !rightEye) return;
-
-        const leftCenter = leftEye[Math.floor(leftEye.length/2)];
-        const rightCenter = rightEye[Math.floor(rightEye.length/2)];
-        const glassesWidth = rightCenter[0] - leftCenter[0];
-        const glassesHeight = glassesWidth * (glassesImg.naturalHeight / glassesImg.naturalWidth);
-
+    
+        const leftCenter = leftEye[Math.floor(leftEye.length / 2)];
+        const rightCenter = rightEye[Math.floor(rightEye.length / 2)];
+    
+        const centerX = (leftCenter[0] + rightCenter[0]) / 2;
+        const centerY = (leftCenter[1] + rightCenter[1]) / 2;
+    
+        const dx = rightCenter[0] - leftCenter[0];
+        const dy = rightCenter[1] - leftCenter[1];
+        const angle = Math.atan2(dy, dx);
+    
+        const glassesWidth = Math.hypot(dx, dy) * 2.2;
+        const glassesHeight = glassesWidth / 2.5;
+    
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        ctx.rotate(angle);
+        ctx.scale(1, -1)
         ctx.drawImage(
             glassesImg,
-            leftCenter[0] - glassesWidth * 0.3,  
-            leftCenter[1] - glassesHeight * 0.6,
-            glassesWidth * 1.8,
-            glassesHeight * 1.2
+            -glassesWidth / 2,
+            -glassesHeight / 2,
+            glassesWidth,
+            glassesHeight
         );
+        ctx.restore();
     };
 
     const applyMustacheFilter = (ctx: CanvasRenderingContext2D, prediction: any) => {
